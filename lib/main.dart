@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:math';
 import 'package:Finger_Game/splash.dart';
 import 'package:Finger_Game/widgets/w_banner_ads.dart';
 import 'package:flutter/material.dart';
@@ -81,19 +80,31 @@ class _FingerGameScreenState extends State<FingerGameScreen> with SingleTickerPr
     _animation = Tween<double>(begin: 0, end: 1).animate(_animationController);
   }
 
-  void _startGame() {
+  void _resetGame() {
     setState(() {
-      _gameStarted = true;
+      _gameStarted = false;
       _gameEnded = false;
       _touches.clear();
       _colorIndex = 0;
       _countdown = 3;
+      _timerStarted = false; // 이 줄을 추가합니다
+    });
+    if (_timer != null && _timer!.isActive) {
+      _timer!.cancel();
+    }
+    _animationController.reset();
+  }
+
+  void _startGame() {
+    _resetGame();
+    setState(() {
+      _gameStarted = true;
     });
     _startCountdown();
   }
 
   void _startCountdown() {
-    Timer.periodic(const Duration(seconds: 1), (timer) {
+    _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
       setState(() {
         if (_countdown > 0) {
           _countdown--;
@@ -106,7 +117,7 @@ class _FingerGameScreenState extends State<FingerGameScreen> with SingleTickerPr
   }
 
   void _onPointerDown(PointerDownEvent event) {
-    if (_gameStarted && !_gameEnded && _countdown == 0) {
+    if (_gameStarted && !_gameEnded && _countdown == 0 && _animationController.isCompleted) {
       setState(() {
         if (!_touches.containsKey(event.pointer)) {
           _touches[event.pointer] = TouchInfo(event.position, _initialColor, -1);
