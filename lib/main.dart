@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math';
 import 'package:Finger_Game/splash.dart';
 import 'package:Finger_Game/widgets/w_banner_ads.dart';
 import 'package:flutter/material.dart';
@@ -67,6 +68,9 @@ class _FingerGameScreenState extends State<FingerGameScreen> with SingleTickerPr
     Colors.purple,
   ];
 
+  final Color _initialColor = Colors.grey;
+  bool _timerStarted = false;
+
   @override
   void initState() {
     super.initState();
@@ -104,28 +108,28 @@ class _FingerGameScreenState extends State<FingerGameScreen> with SingleTickerPr
   void _onPointerDown(PointerDownEvent event) {
     if (_gameStarted && !_gameEnded && _countdown == 0) {
       setState(() {
-        _touches[event.pointer] = TouchInfo(event.position, _rainbowColors[_colorIndex], _colorIndex);
-        _colorIndex = (_colorIndex + 1) % _rainbowColors.length;
-
-        if (_touches.length == 1) {
-          _startTimer();
+        if (!_touches.containsKey(event.pointer)) {
+          _touches[event.pointer] = TouchInfo(event.position, _initialColor, -1);
+          if (!_timerStarted) {
+            _startTimer();
+            _timerStarted = true;
+          }
         }
       });
     }
   }
 
-  void _onPointerUp(PointerUpEvent event) {
-    if (_gameStarted && !_gameEnded && _countdown == 0) {
-      setState(() {
-        _touches.remove(event.pointer);
-      });
-    }
-  }
+  // _onPointerUp 메서드 제거
 
   void _startTimer() {
     _timer = Timer(const Duration(seconds: 3), () {
       setState(() {
         _gameEnded = true;
+        final randomColorIndices = List.generate(_rainbowColors.length, (index) => index)..shuffle();
+        _touches.forEach((key, value) {
+          final randomColorIndex = randomColorIndices[key % _rainbowColors.length];
+          _touches[key] = TouchInfo(value.position, _rainbowColors[randomColorIndex], randomColorIndex);
+        });
       });
       _animationController.reverse();
     });
@@ -140,13 +144,13 @@ class _FingerGameScreenState extends State<FingerGameScreen> with SingleTickerPr
   @override
   Widget build(BuildContext context) {
     final localizations = AppLocalizations.of(context);
-    return Scaffold(
-      body: Column(
-        children: [
-          Expanded(
-            child: Listener(
-              onPointerDown: _onPointerDown,
-              onPointerUp: _onPointerUp,
+    return Listener(
+      onPointerDown: _onPointerDown,
+      // onPointerUp 리스너 제거
+      child: Scaffold(
+        body: Column(
+          children: [
+            Expanded(
               child: Container(
                 decoration: BoxDecoration(
                   gradient: LinearGradient(
@@ -268,9 +272,9 @@ class _FingerGameScreenState extends State<FingerGameScreen> with SingleTickerPr
                 ),
               ),
             ),
-          ),
-          SizedBox(height: 64, child: BannerAdWidget()),
-        ],
+            BannerAdWidget(adSize: AdSize.banner),
+          ],
+        ),
       ),
     );
   }
