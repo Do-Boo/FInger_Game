@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'dart:math';
+import 'package:Finger_Game/service/s_ad_helper.dart';
 import 'package:Finger_Game/splash.dart';
 import 'package:Finger_Game/widgets/w_banner_ads.dart';
 import 'package:flutter/material.dart';
@@ -6,6 +8,8 @@ import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_native_splash/flutter_native_splash.dart';
 import 'package:google_mobile_ads/google_mobile_ads.dart';
+import 'package:audioplayers/audioplayers.dart';
+import 'package:hugeicons/hugeicons.dart';
 
 void main() async {
   WidgetsBinding widgetsBinding = WidgetsFlutterBinding.ensureInitialized();
@@ -52,10 +56,10 @@ class _FingerGameScreenState extends State<FingerGameScreen> with SingleTickerPr
   bool _gameEnded = false;
   final Map<int, TouchInfo> _touches = {};
   Timer? _timer;
-  int _colorIndex = 0;
   int _countdown = 3;
   late AnimationController _animationController;
   late Animation<double> _animation;
+  final AudioPlayer _audioPlayer = AudioPlayer();
 
   final List<Color> _rainbowColors = [
     Colors.red,
@@ -69,6 +73,10 @@ class _FingerGameScreenState extends State<FingerGameScreen> with SingleTickerPr
 
   final Color _initialColor = Colors.grey;
   bool _timerStarted = false;
+  bool _isSoundOn = true;
+  final bool _isVibrationOn = true;
+  InterstitialAd? _interstitialAd;
+  final Random _random = Random();
 
   @override
   void initState() {
@@ -78,21 +86,43 @@ class _FingerGameScreenState extends State<FingerGameScreen> with SingleTickerPr
       duration: const Duration(milliseconds: 500),
     );
     _animation = Tween<double>(begin: 0, end: 1).animate(_animationController);
+    _loadInterstitialAd();
+    _loadAudio();
   }
 
-  void _resetGame() {
-    setState(() {
-      _gameStarted = false;
-      _gameEnded = false;
-      _touches.clear();
-      _colorIndex = 0;
-      _countdown = 3;
-      _timerStarted = false; // 이 줄을 추가합니다
-    });
-    if (_timer != null && _timer!.isActive) {
-      _timer!.cancel();
+  Future<void> _loadAudio() async {
+    await _audioPlayer.setSource(AssetSource('bgm/count_down.mp3'));
+  }
+
+  void _loadInterstitialAd() {
+    InterstitialAd.load(
+      adUnitId: AdHelper.interstitialAdUnitId,
+      request: const AdRequest(),
+      adLoadCallback: InterstitialAdLoadCallback(
+        onAdLoaded: (ad) {
+          ad.fullScreenContentCallback = FullScreenContentCallback(
+            onAdDismissedFullScreenContent: (ad) {
+              _loadInterstitialAd(); // 광고가 닫힌 후 다시 로드
+            },
+          );
+
+          setState(() {
+            _interstitialAd = ad;
+          });
+        },
+        onAdFailedToLoad: (err) {
+          print('전면 광고 로드 실패: ${err.message}');
+        },
+      ),
+    );
+  }
+
+  void _showInterstitialAd() {
+    if (_interstitialAd != null && _random.nextDouble() < 0.6) {
+      _interstitialAd!.show();
+    } else {
+      _loadInterstitialAd(); // 광고가 표시되지 않았을 때도 다시 로드
     }
-    _animationController.reset();
   }
 
   void _startGame() {
@@ -101,19 +131,60 @@ class _FingerGameScreenState extends State<FingerGameScreen> with SingleTickerPr
       _gameStarted = true;
     });
     _startCountdown();
+    _showInterstitialAd(); // 게임 시작 시 5% 확률로 광고 표시 시도
+  }
+
+  void _resetGame() {
+    setState(() {
+      _gameStarted = false;
+      _gameEnded = false;
+      _touches.clear();
+      _countdown = 3;
+      _timerStarted = false;
+    });
+    if (_timer != null && _timer!.isActive) {
+      _timer!.cancel();
+    }
+    _animationController.reset();
+    // 여기서는 광고를 표시하지 않습니다.
   }
 
   void _startCountdown() {
-    _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
+    _playCountdownSound(); // 즉시 첫 번째 사운드 재생
+    _timer = Timer.periodic(const Duration(seconds: 1), (timer) async {
       setState(() {
-        if (_countdown > 0) {
+        if (_countdown > 1) {
+          // 1로 변경ㄴ
           _countdown--;
+          _playCountdownSound();
+          _performHapticFeedback(HapticFeedbackType.light);
+        } else if (_countdown == 1) {
+          // 새로운 조건 추가
+          _countdown--;
+          _playStartSound();
+          _performHapticFeedback(HapticFeedbackType.medium);
+          _animationController.forward();
         } else {
           timer.cancel();
-          _animationController.forward();
         }
       });
     });
+  }
+
+  Future<void> _playCountdownSound() async {
+    if (_isSoundOn) {
+      await _audioPlayer.stop();
+      await _audioPlayer.setSource(AssetSource('bgm/count_down.mp3'));
+      await _audioPlayer.resume();
+    }
+  }
+
+  Future<void> _playStartSound() async {
+    if (_isSoundOn) {
+      await _audioPlayer.stop();
+      await _audioPlayer.setSource(AssetSource('bgm/start_sound.mp3'));
+      await _audioPlayer.resume();
+    }
   }
 
   void _onPointerDown(PointerDownEvent event) {
@@ -125,6 +196,7 @@ class _FingerGameScreenState extends State<FingerGameScreen> with SingleTickerPr
             _startTimer();
             _timerStarted = true;
           }
+          _performHapticFeedback(HapticFeedbackType.selection); // 터치 시 햅틱 피드백 추가
         }
       });
     }
@@ -152,6 +224,28 @@ class _FingerGameScreenState extends State<FingerGameScreen> with SingleTickerPr
     return localizations.lastTouchedColor(lastTouch.colorIndex);
   }
 
+  void _toggleSound() {
+    setState(() {
+      _isSoundOn = !_isSoundOn;
+    });
+  }
+
+  void _performHapticFeedback(HapticFeedbackType type) {
+    if (_isVibrationOn) {
+      switch (type) {
+        case HapticFeedbackType.light:
+          HapticFeedback.lightImpact();
+          break;
+        case HapticFeedbackType.medium:
+          HapticFeedback.mediumImpact();
+          break;
+        case HapticFeedbackType.selection:
+          HapticFeedback.selectionClick();
+          break;
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final localizations = AppLocalizations.of(context);
@@ -159,131 +253,145 @@ class _FingerGameScreenState extends State<FingerGameScreen> with SingleTickerPr
       onPointerDown: _onPointerDown,
       // onPointerUp 리스너 제거
       child: Scaffold(
-        body: Column(
+        body: Stack(
           children: [
-            Expanded(
-              child: Container(
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                    colors: [Colors.blue[100]!, Colors.purple[100]!],
+            Column(
+              children: [
+                Expanded(
+                  child: Container(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: [Colors.blue[100]!, Colors.purple[100]!],
+                      ),
+                    ),
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: <Widget>[
+                        ..._touches.values.map(
+                          (touch) => Positioned(
+                            left: touch.position.dx - 25,
+                            top: touch.position.dy - 25,
+                            child: TweenAnimationBuilder(
+                              tween: Tween<double>(begin: 0, end: 1),
+                              duration: const Duration(milliseconds: 300),
+                              builder: (context, double value, child) {
+                                return Transform.scale(
+                                  scale: value,
+                                  child: Container(
+                                    width: 50,
+                                    height: 50,
+                                    decoration: BoxDecoration(
+                                      color: touch.color.withOpacity(0.7),
+                                      shape: BoxShape.circle,
+                                      boxShadow: const [
+                                        BoxShadow(
+                                          color: Colors.black26,
+                                          blurRadius: 5,
+                                          offset: Offset(2, 2),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                );
+                              },
+                            ),
+                          ),
+                        ),
+                        Center(
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: <Widget>[
+                              if (_countdown > 0)
+                                Text(
+                                  '$_countdown',
+                                  style: TextStyle(
+                                    fontSize: 72,
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.white,
+                                    shadows: [
+                                      Shadow(
+                                        blurRadius: 4.0,
+                                        color: Colors.black.withOpacity(0.3),
+                                        offset: const Offset(2, 2),
+                                      ),
+                                    ],
+                                  ),
+                                )
+                              else if (_gameStarted && !_gameEnded)
+                                FadeTransition(
+                                  opacity: _animation,
+                                  child: Text(
+                                    localizations.touchNow,
+                                    style: TextStyle(
+                                      fontSize: 36,
+                                      fontWeight: FontWeight.bold,
+                                      color: Colors.white,
+                                      shadows: [
+                                        Shadow(
+                                          blurRadius: 4.0,
+                                          color: Colors.black.withOpacity(0.3),
+                                          offset: const Offset(2, 2),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                )
+                              else if (_gameEnded)
+                                Padding(
+                                  padding: const EdgeInsets.symmetric(horizontal: 20),
+                                  child: Text(
+                                    _getResult(localizations),
+                                    style: TextStyle(
+                                      fontSize: 24,
+                                      fontWeight: FontWeight.bold,
+                                      color: Colors.white,
+                                      shadows: [
+                                        Shadow(
+                                          blurRadius: 4.0,
+                                          color: Colors.black.withOpacity(0.3),
+                                          offset: const Offset(2, 2),
+                                        ),
+                                      ],
+                                    ),
+                                    textAlign: TextAlign.center,
+                                  ),
+                                ),
+                              const SizedBox(height: 40),
+                              if (!_gameStarted || _gameEnded)
+                                ElevatedButton(
+                                  onPressed: _startGame,
+                                  style: ElevatedButton.styleFrom(
+                                    foregroundColor: Colors.deepPurple[600],
+                                    backgroundColor: Colors.white,
+                                    padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 15),
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(30),
+                                    ),
+                                  ),
+                                  child: Text(localizations.startGame, style: const TextStyle(fontSize: 18)),
+                                ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
-                child: Stack(
-                  fit: StackFit.expand,
-                  children: <Widget>[
-                    ..._touches.values.map(
-                      (touch) => Positioned(
-                        left: touch.position.dx - 25,
-                        top: touch.position.dy - 25,
-                        child: TweenAnimationBuilder(
-                          tween: Tween<double>(begin: 0, end: 1),
-                          duration: const Duration(milliseconds: 300),
-                          builder: (context, double value, child) {
-                            return Transform.scale(
-                              scale: value,
-                              child: Container(
-                                width: 50,
-                                height: 50,
-                                decoration: BoxDecoration(
-                                  color: touch.color.withOpacity(0.7),
-                                  shape: BoxShape.circle,
-                                  boxShadow: const [
-                                    BoxShadow(
-                                      color: Colors.black26,
-                                      blurRadius: 5,
-                                      offset: Offset(2, 2),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            );
-                          },
-                        ),
-                      ),
-                    ),
-                    Center(
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: <Widget>[
-                          if (_countdown > 0)
-                            Text(
-                              '$_countdown',
-                              style: TextStyle(
-                                fontSize: 72,
-                                fontWeight: FontWeight.bold,
-                                color: Colors.white,
-                                shadows: [
-                                  Shadow(
-                                    blurRadius: 4.0,
-                                    color: Colors.black.withOpacity(0.3),
-                                    offset: const Offset(2, 2),
-                                  ),
-                                ],
-                              ),
-                            )
-                          else if (_gameStarted && !_gameEnded)
-                            FadeTransition(
-                              opacity: _animation,
-                              child: Text(
-                                localizations.touchNow,
-                                style: TextStyle(
-                                  fontSize: 36,
-                                  fontWeight: FontWeight.bold,
-                                  color: Colors.white,
-                                  shadows: [
-                                    Shadow(
-                                      blurRadius: 4.0,
-                                      color: Colors.black.withOpacity(0.3),
-                                      offset: const Offset(2, 2),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            )
-                          else if (_gameEnded)
-                            Padding(
-                              padding: const EdgeInsets.symmetric(horizontal: 20),
-                              child: Text(
-                                _getResult(localizations),
-                                style: TextStyle(
-                                  fontSize: 24,
-                                  fontWeight: FontWeight.bold,
-                                  color: Colors.white,
-                                  shadows: [
-                                    Shadow(
-                                      blurRadius: 4.0,
-                                      color: Colors.black.withOpacity(0.3),
-                                      offset: const Offset(2, 2),
-                                    ),
-                                  ],
-                                ),
-                                textAlign: TextAlign.center,
-                              ),
-                            ),
-                          const SizedBox(height: 40),
-                          if (!_gameStarted || _gameEnded)
-                            ElevatedButton(
-                              onPressed: _startGame,
-                              style: ElevatedButton.styleFrom(
-                                foregroundColor: Colors.deepPurple[600],
-                                backgroundColor: Colors.white,
-                                padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 15),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(30),
-                                ),
-                              ),
-                              child: Text(localizations.startGame, style: const TextStyle(fontSize: 18)),
-                            ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
+                BannerAdWidget(adSize: AdSize.banner),
+              ],
+            ),
+            // 우측 상단 소리 버튼
+            Positioned(
+              left: 8,
+              top: 8 + MediaQuery.of(context).padding.top,
+              child: IconButton(
+                icon: Icon(_isSoundOn ? HugeIcons.strokeRoundedVolumeHigh : HugeIcons.strokeRoundedVolumeOff, size: 32),
+                onPressed: _toggleSound,
+                color: Colors.white.withOpacity(0.7),
               ),
             ),
-            BannerAdWidget(adSize: AdSize.banner),
           ],
         ),
       ),
@@ -293,7 +401,9 @@ class _FingerGameScreenState extends State<FingerGameScreen> with SingleTickerPr
   @override
   void dispose() {
     _timer?.cancel();
+    _interstitialAd?.dispose();
     _animationController.dispose();
+    _audioPlayer.dispose();
     super.dispose();
   }
 }
@@ -334,13 +444,13 @@ class AppLocalizations {
       'touchNow': '터치하세요!',
       'startGame': '게임 시작',
       'noTouch': '아무도 터치하지 않았습니다!',
-      'lastTouchedRed': '빨강색 술래입니다!',
-      'lastTouchedOrange': '주황색을 술래입니다!',
-      'lastTouchedYellow': '노랑색을 술래입니다!',
-      'lastTouchedGreen': '초록색을 술래입니다!',
-      'lastTouchedBlue': '파랑색을 술래입니다!',
-      'lastTouchedIndigo': '남색을 술래입니다!',
-      'lastTouchedPurple': '보라색을 술래입니다!',
+      'lastTouchedRed': '빨강색이 술래입니다!',
+      'lastTouchedOrange': '주황색이 술래입니다!',
+      'lastTouchedYellow': '노랑색이 술래입니다!',
+      'lastTouchedGreen': '초록색이 술래입니다!',
+      'lastTouchedBlue': '파랑색이 술래입니다!',
+      'lastTouchedIndigo': '남색이 술래입니다!',
+      'lastTouchedPurple': '보라색이 술래입니다!',
     },
   };
 
@@ -367,4 +477,10 @@ class _AppLocalizationsDelegate extends LocalizationsDelegate<AppLocalizations> 
 
   @override
   bool shouldReload(_AppLocalizationsDelegate old) => false;
+}
+
+enum HapticFeedbackType {
+  light,
+  medium,
+  selection,
 }

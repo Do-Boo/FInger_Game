@@ -32,6 +32,7 @@ migrate_working_dir/
 /build/
 /lib/widgets/w_banner_ads.dart
 /lib/web
+/lib/service
 
 # Symbolication related
 app.*.symbols
